@@ -5,6 +5,7 @@ Compatible with:
 - datakit Tool/Function schema (types.py)
 - CoF dataset: image_zoom_in_tool signature preserved exactly
 - CodeDance dataset: all 17 atomic operations covered
+- Includes extra utility image merge support for multi-image workflows
 
 Tool result conventions:
   - Image-returning tools : {"image_path": "<path>"}   (CoF-compatible)
@@ -313,6 +314,66 @@ IMAGE_ROTATE_TOOL = _func(
     required=["angle"],
 )
 
+# 1-10. image_merge_tool
+IMAGE_MERGE_TOOL = _func(
+    name="image_merge_tool",
+    description=(
+        "Merge two or more images into a single composite image while preserving the "
+        "input order. Supports horizontal (left-to-right) and vertical (top-to-bottom) "
+        "layout. When image sizes differ, images are aligned within their row or column "
+        "using the align parameter. Useful for comparing multiple views, combining a "
+        "tool result with the original image, or constructing a single panel from "
+        "multiple intermediate outputs."
+    ),
+    properties={
+        "image_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 2,
+            "description": (
+                "Ordered list of input image paths to merge. "
+                "For direction='horizontal', the first image is placed on the left. "
+                "For direction='vertical', the first image is placed at the top."
+            ),
+        },
+        "direction": {
+            "type": "string",
+            "enum": ["horizontal", "vertical"],
+            "description": (
+                "Merge direction. "
+                "'horizontal' arranges images left-to-right; "
+                "'vertical' arranges images top-to-bottom."
+            ),
+            "default": "horizontal",
+        },
+        "align": {
+            "type": "string",
+            "enum": ["start", "center", "end"],
+            "description": (
+                "Alignment on the non-stacking axis when image sizes differ. "
+                "For horizontal merge this means top/center/bottom; "
+                "for vertical merge this means left/center/right."
+            ),
+            "default": "center",
+        },
+        "gap": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of blank pixels inserted between adjacent images.",
+            "default": 0,
+        },
+        "background_color": {
+            **_COLOR_RGB,
+            "default": [255, 255, 255],
+            "description": (
+                "RGB fill color for the canvas and any padding area created by alignment "
+                "or gaps. Default white [255, 255, 255]."
+            ),
+        },
+    },
+    required=["image_paths"],
+)
+
 # ---------------------------------------------------------------------------
 # 2. Math – computation
 # ---------------------------------------------------------------------------
@@ -585,6 +646,7 @@ ALL_TOOLS: list[dict] = [
     IMAGE_DRAW_TEXT_TOOL,
     IMAGE_DRAW_ARROW_TOOL,
     IMAGE_ROTATE_TOOL,
+    IMAGE_MERGE_TOOL,
     # Math
     PYTHON_ARITHMETIC_TOOL,
     PYTHON_NUMERICAL_COMPUTE_TOOL,
@@ -885,6 +947,72 @@ def exec_image_rotate_tool(
     return {"image_path": _save_image(rotated, output_path)}
 
 
+def exec_image_merge_tool(
+    image_paths: list[str],
+    direction: str = "horizontal",
+    align: str = "center",
+    gap: int = 0,
+    background_color: list[int] | None = None,
+    output_path: str = _DEFAULT_OUTPUT,
+) -> dict:
+    from PIL import Image
+
+    if len(image_paths) < 2:
+        return {"error": "image_paths must contain at least two image paths."}
+    if direction not in {"horizontal", "vertical"}:
+        return {"error": "direction must be either 'horizontal' or 'vertical'."}
+    if align not in {"start", "center", "end"}:
+        return {"error": "align must be one of 'start', 'center', or 'end'."}
+    if gap < 0:
+        return {"error": "gap must be greater than or equal to 0."}
+    if background_color is None:
+        background_color = [255, 255, 255]
+
+    images: list[Image.Image] = []
+    try:
+        for path in image_paths:
+            images.append(_load_image(path))
+    except FileNotFoundError as exc:
+        return {"error": f"Input image not found: {exc.filename}"}
+
+    widths = [img.width for img in images]
+    heights = [img.height for img in images]
+
+    if direction == "horizontal":
+        canvas_width = sum(widths) + gap * (len(images) - 1)
+        canvas_height = max(heights)
+        offsets: list[tuple[int, int]] = []
+        cursor_x = 0
+        for img in images:
+            if align == "start":
+                y = 0
+            elif align == "center":
+                y = (canvas_height - img.height) // 2
+            else:
+                y = canvas_height - img.height
+            offsets.append((cursor_x, y))
+            cursor_x += img.width + gap
+    else:
+        canvas_width = max(widths)
+        canvas_height = sum(heights) + gap * (len(images) - 1)
+        offsets = []
+        cursor_y = 0
+        for img in images:
+            if align == "start":
+                x = 0
+            elif align == "center":
+                x = (canvas_width - img.width) // 2
+            else:
+                x = canvas_width - img.width
+            offsets.append((x, cursor_y))
+            cursor_y += img.height + gap
+
+    canvas = Image.new("RGB", (canvas_width, canvas_height), tuple(background_color))
+    for img, (x, y) in zip(images, offsets):
+        canvas.paste(img, (x, y))
+    return {"image_path": _save_image(canvas, output_path)}
+
+
 # ── Code-execution tools ─────────────────────────────────────────────────────
 
 def exec_python_arithmetic_tool(code: str) -> dict:
@@ -993,6 +1121,7 @@ _EXECUTORS: dict[str, object] = {
     "image_draw_text_tool":            exec_image_draw_text_tool,
     "image_draw_arrow_tool":           exec_image_draw_arrow_tool,
     "image_rotate_tool":               exec_image_rotate_tool,
+    "image_merge_tool":                exec_image_merge_tool,
     "python_arithmetic_tool":          exec_python_arithmetic_tool,
     "python_numerical_compute_tool":   exec_python_numerical_compute_tool,
     "python_symbolic_math_tool":       exec_python_symbolic_math_tool,

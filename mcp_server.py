@@ -2,7 +2,7 @@
 """
 Visual Reasoning Tools — MCP Server
 ====================================
-Exposes all 18 atomic visual-reasoning tools as MCP tools via FastMCP.
+Exposes all 19 visual-reasoning tools as MCP tools via FastMCP.
 
 Run (stdio, for Claude Desktop / MCP clients):
     python mcp_server.py
@@ -318,6 +318,38 @@ def image_rotate_tool(
     result = _td.exec_image_rotate_tool(
         angle=angle,
         image_path=image_path,
+        output_path=output_path,
+    )
+    return _img_response(result)
+
+
+@mcp.tool()
+def image_merge_tool(
+    image_paths: list[str],
+    output_path: str = "output_image.jpg",
+    direction: str = "horizontal",
+    align: str = "center",
+    gap: int = 0,
+    background_color: list[int] = None,
+) -> list[TextContent | ImageContent]:
+    """
+    Merge two or more images into a single composite image while preserving
+    input order. Supports left-to-right or top-to-bottom layout.
+
+    Args:
+        image_paths: Ordered list of source image paths to merge.
+        output_path: Path to save the merged result.
+        direction: "horizontal" or "vertical". Default "horizontal".
+        align: Alignment on the non-stacking axis: "start", "center", or "end".
+        gap: Blank pixels inserted between adjacent images. Default 0.
+        background_color: RGB canvas fill color. Default white [255, 255, 255].
+    """
+    result = _td.exec_image_merge_tool(
+        image_paths=image_paths,
+        direction=direction,
+        align=align,
+        gap=gap,
+        background_color=background_color or [255, 255, 255],
         output_path=output_path,
     )
     return _img_response(result)
